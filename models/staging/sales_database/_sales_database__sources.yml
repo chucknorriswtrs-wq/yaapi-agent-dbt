@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: sales_database
+    database: project-86de297e-faf0-406b-8b5
+    schema: sales_database
+    tables:
+      - name: feedback
+      - name: order
+      - name: order_item
+      - name: payment
+      - name: product
+      - name: seller
+      - name: user
