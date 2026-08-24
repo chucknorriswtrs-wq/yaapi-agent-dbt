@@ -1,56 +1,71 @@
--- Staging model for the raw `order_item` table of the sales_database source.
--- Grain: one row per product sold by a seller within an order.
+-- Staging model for the order_item source table.
+-- Grain: one row per order / product / seller line.
+-- The source has no primary key, so a surrogate key is built below.
 
 with source as (
 
-    -- Raw data, read through the dbt source so that lineage is tracked
-    select * from {{ source('sales_database', 'order_item') }}
+    -- Read every column explicitly from the raw source table, no transformation here.
+    select
+        order_id,
+        product_id,
+        seller_id,
+        pickup_limit_date,
+        price,
+        shipping_cost,
+        quantity
+    from {{ source('sales_database', 'order_item') }}
 
 ),
 
 renamed as (
 
-    -- Explicit column list: cast the types and give business-readable names
+    -- Surrogate primary key: no single column is unique, the three foreign keys together are.
+    -- price is renamed item_price to make clear it is the unit line price, not an order total.
+    -- Monetary FLOAT64 values are cast to NUMERIC to avoid floating point rounding on sums.
+    -- pickup_limit_date stays TIMESTAMP: the carrier deadline is an hour, not a day.
     select
-        -- surrogate primary key: the source table has no unique column, so the
-        -- three columns that together identify a line are concatenated
-        concat(
-            cast(order_id as string), '-',
-            cast(product_id as string), '-',
-            cast(seller_id as string)
-        ) as order_item_id,
-
-        -- foreign keys to the order, product and seller staging models
-        cast(order_id as string) as order_id,
-        cast(product_id as string) as product_id,
-        cast(seller_id as string) as seller_id,
-
-        -- measures: money cast from FLOAT64 to NUMERIC so that sums are exact
-        -- and never drift by rounding; quantity is a whole number
+        concat(order_id, '-', product_id, '-', seller_id) as order_item_id,
+        order_id,
+        product_id,
+        seller_id,
+        cast(pickup_limit_date as timestamp) as pickup_limit_at,
         cast(price as numeric) as item_price,
         cast(shipping_cost as numeric) as shipping_cost,
-        cast(quantity as int64) as quantity,
-
-        -- timestamp: a shipping deadline expressed to the hour in the source,
-        -- so it stays TIMESTAMP rather than being truncated to a DATE
-        cast(pickup_limit_date as timestamp) as pickup_limit_at
-
+        cast(quantity as int64) as quantity
     from source
 
 ),
 
 deduplicated as (
 
-    -- Defensive de-duplication: keep one row per surrogate key.
-    -- No duplicate exists in the source today; this protects future loads.
-    select *
+    -- Defensive de-duplication: one row per surrogate key.
+    select
+        order_item_id,
+        order_id,
+        product_id,
+        seller_id,
+        pickup_limit_at,
+        item_price,
+        shipping_cost,
+        quantity
     from renamed
     qualify row_number() over (
         partition by order_item_id
-        order by pickup_limit_at desc
+        order by
+            pickup_limit_at desc,
+            item_price desc
     ) = 1
 
 )
 
--- Final output: cleaned, typed, one row per order line
-select * from deduplicated
+-- Final output exposed to the downstream layers.
+select
+    order_item_id,
+    order_id,
+    product_id,
+    seller_id,
+    pickup_limit_at,
+    item_price,
+    shipping_cost,
+    quantity
+from deduplicated

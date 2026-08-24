@@ -1,47 +1,58 @@
--- Staging model for the raw `feedback` table of the sales_database source.
--- Grain: one row per feedback form.
+-- Staging model for the feedback source table.
+-- Grain: one row per feedback_id (natural primary key).
 
 with source as (
 
-    -- Raw data, read through the dbt source so that lineage is tracked
-    select * from {{ source('sales_database', 'feedback') }}
+    -- Read every column explicitly from the raw source table, no transformation here.
+    select
+        feedback_id,
+        order_id,
+        feedback_score,
+        feedback_form_sent_date,
+        feedback_answer_date
+    from {{ source('sales_database', 'feedback') }}
 
 ),
 
 renamed as (
 
-    -- Explicit column list: cast the types and give business-readable names
+    -- Apply naming conventions (event timestamps end with _at) and pin the data types.
+    -- The two date columns stay TIMESTAMP: they carry a time component used to measure
+    -- the delay between the survey being sent and the customer answering it.
     select
-        -- primary key: natural key, already unique in the source
-        cast(feedback_id as string) as feedback_id,
-
-        -- foreign key to stg_sales_database__order
-        cast(order_id as string) as order_id,
-
-        -- attribute: satisfaction score left by the customer
+        feedback_id,
+        order_id,
         cast(feedback_score as int64) as feedback_score,
-
-        -- timestamps: the source stores a full date + time, so the values stay
-        -- TIMESTAMP; casting to DATE would destroy the time component
-        cast(feedback_form_sent_date as timestamp) as feedback_form_sent_at,
+        cast(feedback_form_sent_date as timestamp) as feedback_sent_at,
         cast(feedback_answer_date as timestamp) as feedback_answered_at
-
     from source
 
 ),
 
 deduplicated as (
 
-    -- Defensive de-duplication: keep one row per key, latest answer first.
-    -- No duplicate exists in the source today; this protects future loads.
-    select *
+    -- Defensive de-duplication: keep the most recent record per feedback_id.
+    select
+        feedback_id,
+        order_id,
+        feedback_score,
+        feedback_sent_at,
+        feedback_answered_at
     from renamed
     qualify row_number() over (
         partition by feedback_id
-        order by feedback_answered_at desc
+        order by
+            feedback_answered_at desc,
+            feedback_sent_at desc
     ) = 1
 
 )
 
--- Final output: cleaned, typed, one row per feedback
-select * from deduplicated
+-- Final output exposed to the downstream layers.
+select
+    feedback_id,
+    order_id,
+    feedback_score,
+    feedback_sent_at,
+    feedback_answered_at
+from deduplicated

@@ -1,48 +1,58 @@
--- Staging model for the raw `user` table of the sales_database source.
--- Grain: one row per customer.
+-- Staging model for the user source table.
+-- Grain: one row per customer (natural primary key, named user_name upstream).
 
 with source as (
 
-    -- Raw data, read through the dbt source so that lineage is tracked
-    select * from {{ source('sales_database', 'user') }}
+    -- Read every column explicitly from the raw source table, no transformation here.
+    select
+        user_name,
+        customer_zip_code,
+        customer_city,
+        customer_state,
+        row_num
+    from {{ source('sales_database', 'user') }}
 
 ),
 
 renamed as (
 
-    -- Explicit column list: cast the types and give business-readable names
+    -- user_name holds the customer key, not a person's name: renamed customer_id so it
+    -- matches the column it joins to in the order table.
+    -- The zip code is cast to STRING (identifier, keeps leading zeros).
+    -- row_num is a technical extraction counter: prefixed source_ to flag it as such.
     select
-        -- primary key: the source calls it user_name but it holds the customer
-        -- identifier, so it is renamed to customer_id and used as the key
         cast(user_name as string) as customer_id,
-
-        -- attributes: the zip code is an identifier, not a quantity, so it is
-        -- cast from INT64 to STRING; leaving it numeric would drop leading
-        -- zeros and invite meaningless arithmetic
         cast(customer_zip_code as string) as customer_zip_code,
-        cast(customer_city as string) as customer_city,
-        cast(customer_state as string) as customer_state,
-
-        -- technical column produced by the loader, kept but prefixed so that
-        -- it is never mistaken for a business attribute
+        customer_city,
+        customer_state,
         cast(row_num as int64) as source_row_num
-
     from source
 
 ),
 
 deduplicated as (
 
-    -- Defensive de-duplication: keep one row per key.
-    -- No duplicate exists in the source today; this protects future loads.
-    select *
+    -- Defensive de-duplication: keep the first extracted row per customer_id.
+    select
+        customer_id,
+        customer_zip_code,
+        customer_city,
+        customer_state,
+        source_row_num
     from renamed
     qualify row_number() over (
         partition by customer_id
-        order by source_row_num
+        order by
+            source_row_num asc
     ) = 1
 
 )
 
--- Final output: cleaned, typed, one row per customer
-select * from deduplicated
+-- Final output exposed to the downstream layers.
+select
+    customer_id,
+    customer_zip_code,
+    customer_city,
+    customer_state,
+    source_row_num
+from deduplicated
