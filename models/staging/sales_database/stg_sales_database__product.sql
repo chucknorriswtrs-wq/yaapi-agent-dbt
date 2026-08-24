@@ -21,19 +21,25 @@ with source as (
 renamed as (
 
     -- The source misspells "lenght": the columns are renamed to length.
-    -- Character counts and photo counts are stored as FLOAT64 upstream although they are
-    -- discrete counts, so they are cast to INT64.
-    -- Physical dimensions stay decimal and are cast to NUMERIC for exact arithmetic.
+    -- Every measure is stored as FLOAT64 upstream but carries no meaningful
+    -- decimal part (character counts, photo counts, grams and whole centimetres),
+    -- so everything is cast to INT64. Note that BigQuery rounds half away from
+    -- zero on a FLOAT64 -> INT64 cast, it does not truncate.
+    -- coalesce removes the NULLs so that downstream arithmetic (sum, volume,
+    -- shipping weight) never propagates a NULL:
+    --   - text -> 'unknown' (623 rows have no category)
+    --   - counts and measures -> 0 (610 rows for the counts, 2 rows for the dimensions)
+    -- 0 is a sentinel meaning "not provided by the source", not a measured zero.
     select
         product_id,
-        product_category,
-        cast(product_name_lenght as int64) as product_name_length,
-        cast(product_description_lenght as int64) as product_description_length,
-        cast(product_photos_qty as int64) as product_photos_qty,
-        cast(product_weight_g as numeric) as product_weight_g,
-        cast(product_length_cm as numeric) as product_length_cm,
-        cast(product_height_cm as numeric) as product_height_cm,
-        cast(product_width_cm as numeric) as product_width_cm
+        coalesce(product_category, 'unknown') as product_category,
+        coalesce(cast(product_name_lenght as int64), 0) as product_name_length,
+        coalesce(cast(product_description_lenght as int64), 0) as product_description_length,
+        coalesce(cast(product_photos_qty as int64), 0) as product_photos_qty,
+        coalesce(cast(product_weight_g as int64), 0) as product_weight_g,
+        coalesce(cast(product_length_cm as int64), 0) as product_length_cm,
+        coalesce(cast(product_height_cm as int64), 0) as product_height_cm,
+        coalesce(cast(product_width_cm as int64), 0) as product_width_cm
     from source
 
 ),
@@ -41,6 +47,8 @@ renamed as (
 deduplicated as (
 
     -- Defensive de-duplication: one row per product_id.
+    -- The most documented row wins (most photos, then heaviest), which also
+    -- keeps a row carrying real values over one filled with the 0 sentinel.
     select
         product_id,
         product_category,
