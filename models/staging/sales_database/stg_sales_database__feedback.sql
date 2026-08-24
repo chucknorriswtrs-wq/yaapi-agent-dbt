@@ -17,14 +17,15 @@ with source as (
 renamed as (
 
     -- Apply naming conventions (event timestamps end with _at) and pin the data types.
-    -- The two date columns stay TIMESTAMP: they carry a time component used to measure
-    -- the delay between the survey being sent and the customer answering it.
+    -- The raw columns are UTC TIMESTAMP instants: datetime(<ts>, 'Europe/Paris') converts them
+    -- to Paris local wall-clock DATETIME, the business time zone used by every downstream layer.
+    -- The time of day is kept, only the reference time zone changes.
     select
         feedback_id,
         order_id,
         cast(feedback_score as int64) as feedback_score,
-        cast(feedback_form_sent_date as timestamp) as feedback_sent_at,
-        cast(feedback_answer_date as timestamp) as feedback_answered_at
+        datetime(feedback_form_sent_date, 'Europe/Paris') as feedback_sent_at,
+        datetime(feedback_answer_date, 'Europe/Paris') as feedback_answered_at
     from source
 
 ),

@@ -22,13 +22,14 @@ renamed as (
     -- Surrogate primary key: no single column is unique, the three foreign keys together are.
     -- price is renamed item_price to make clear it is the unit line price, not an order total.
     -- Monetary FLOAT64 values are cast to NUMERIC to avoid floating point rounding on sums.
-    -- pickup_limit_date stays TIMESTAMP: the carrier deadline is an hour, not a day.
+    -- pickup_limit_date is converted from UTC TIMESTAMP to Paris local DATETIME:
+    -- the carrier deadline is an hour of the day, read in the business time zone.
     select
         concat(order_id, '-', product_id, '-', seller_id) as order_item_id,
         order_id,
         product_id,
         seller_id,
-        cast(pickup_limit_date as timestamp) as pickup_limit_at,
+        datetime(pickup_limit_date, 'Europe/Paris') as pickup_limit_at,
         cast(price as numeric) as item_price,
         cast(shipping_cost as numeric) as shipping_cost,
         cast(quantity as int64) as quantity
