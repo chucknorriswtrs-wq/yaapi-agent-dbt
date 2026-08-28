@@ -1,0 +1,205 @@
+version: 2
+
+models:
+  - name: stg_sales_database__feedback
+    description: >
+      One row per (feedback_id, order_id) pair. feedback_id alone is not unique --
+      several orders share one id -- so the key is the surrogate feedback_key.
+    columns:
+      - name: feedback_key
+        description: Surrogate primary key, feedback_id concatenated with order_id.
+        tests:
+          - unique
+          - not_null
+      - name: feedback_id
+        description: Source feedback identifier. Not unique on its own.
+        tests:
+          - not_null
+      - name: order_id
+        description: The order this feedback is about.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sales_database__order')
+              field: order_id
+      - name: feedback_score
+        description: Satisfaction score given by the customer, 1 to 5.
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5]
+      - name: feedback_sent_at
+        description: When the feedback form was sent, Paris local time.
+      - name: feedback_answered_at
+        description: When the customer answered, Paris local time.
+
+  - name: stg_sales_database__order
+    description: One row per order. Milestone timestamps are Paris local time.
+    columns:
+      - name: order_id
+        description: Natural primary key of the order.
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: The customer who placed the order (user_name upstream).
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sales_database__user')
+              field: customer_id
+      - name: order_status
+        description: Lifecycle status of the order as recorded by the source.
+        tests:
+          - not_null
+      - name: ordered_at
+        description: When the order was placed.
+        tests:
+          - not_null
+      - name: approved_at
+        description: When the order was approved. Null while pending.
+      - name: picked_up_at
+        description: When the carrier collected the parcel.
+      - name: delivered_at
+        description: When the customer received the parcel.
+      - name: estimated_delivery_at
+        description: Delivery date promised to the customer.
+
+  - name: stg_sales_database__order_item
+    description: >
+      One row per order / product / seller line. The source has no primary key,
+      so order_item_id is built from the three foreign keys.
+    columns:
+      - name: order_item_id
+        description: Surrogate primary key -- order_id, product_id and seller_id.
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: The order this line belongs to.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sales_database__order')
+              field: order_id
+      - name: product_id
+        description: The product sold on this line.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sales_database__product')
+              field: product_id
+      - name: seller_id
+        description: The seller who fulfils this line.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sales_database__seller')
+              field: seller_id
+      - name: pickup_limit_at
+        description: Deadline given to the carrier, Paris local time.
+      - name: item_price
+        description: Unit line price, NUMERIC so sums stay exact.
+        tests:
+          - not_null
+      - name: shipping_cost
+        description: Shipping charged on this line, NUMERIC.
+        tests:
+          - not_null
+      - name: quantity
+        description: Number of units on this line.
+        tests:
+          - not_null
+
+  - name: stg_sales_database__payment
+    description: >
+      One row per payment instalment attached to an order. An order can be paid
+      in several sequential parts, so the key is order_id + payment_sequential.
+    columns:
+      - name: payment_id
+        description: Surrogate primary key -- order_id and payment_sequential.
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: The order being paid.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sales_database__order')
+              field: order_id
+      - name: payment_sequential
+        description: Rank of this instalment within the order.
+        tests:
+          - not_null
+      - name: payment_type
+        description: Payment method used for this instalment.
+        tests:
+          - not_null
+      - name: payment_installments
+        description: Number of instalments agreed for this payment.
+      - name: payment_value
+        description: Amount paid on this instalment, NUMERIC.
+        tests:
+          - not_null
+
+  - name: stg_sales_database__product
+    description: >
+      One row per product. Counts and dimensions use 0 as a sentinel meaning
+      "not provided by the source", never a measured zero.
+    columns:
+      - name: product_id
+        description: Natural primary key of the product.
+        tests:
+          - unique
+          - not_null
+      - name: product_category
+        description: Category of the product, 'unknown' when the source has none.
+        tests:
+          - not_null
+      - name: product_name_length
+        description: Character count of the product name (source misspells it "lenght").
+      - name: product_description_length
+        description: Character count of the product description.
+      - name: product_photos_qty
+        description: Number of photos attached to the listing.
+      - name: product_weight_g
+        description: Product weight in grams.
+      - name: product_length_cm
+        description: Product length in whole centimetres.
+      - name: product_height_cm
+        description: Product height in whole centimetres.
+      - name: product_width_cm
+        description: Product width in whole centimetres.
+
+  - name: stg_sales_database__seller
+    description: One row per seller.
+    columns:
+      - name: seller_id
+        description: Natural primary key of the seller.
+        tests:
+          - unique
+          - not_null
+      - name: seller_zip_code
+        description: Zip code as a STRING -- an identifier, so leading zeros are kept.
+      - name: seller_city
+        description: City declared by the seller.
+      - name: seller_state
+        description: State declared by the seller.
+
+  - name: stg_sales_database__user
+    description: One row per customer. The source calls the key user_name.
+    columns:
+      - name: customer_id
+        description: Natural primary key of the customer.
+        tests:
+          - unique
+          - not_null
+      - name: customer_zip_code
+        description: Zip code as a STRING -- an identifier, so leading zeros are kept.
+      - name: customer_city
+        description: City declared by the customer.
+      - name: customer_state
+        description: State declared by the customer.
+      - name: source_row_num
+        description: Technical extraction counter carried over from the source.
